@@ -2,13 +2,16 @@
 #include <Wire.h> 
 #include <ESP8266WiFi.h>
 #include "LiquidCrystal_I2C.h"
-#include "Sensitive.h"
+#include <Adafruit_HTU21DF.h>
 
 #include "Adafruit_MQTT.h"
 #include "Adafruit_MQTT_Client.h"
 
+#include "Sensitive.h"
+
 // Set the LCD address to 0x27 for a 16 chars and 2 line display
 LiquidCrystal_I2C lcd(0x27, 16, 2);
+Adafruit_HTU21DF htu = Adafruit_HTU21DF();
 
 const uint16_t LCD_TIMEOUT = 900000;
 
@@ -79,6 +82,17 @@ void publishB() {
   }
 }
 
+
+// update line 2 of the LCD (todo: update messageCallback to only update line 1)
+void updateLineTwo(float temp, float humid) {
+  lcd.setCursor(0, 1);
+  lcd.print("T: ");
+  lcd.print(round(temp));
+  lcd.print(" | ");
+  lcd.print("H: ");
+  lcd.print(round(humid));
+}
+
 void setup()
 {
   // attach interrupt for Pin A
@@ -131,21 +145,33 @@ void setup()
   messages.setCallback(messageCallback);
   mqtt.subscribe(&messages);
 
+  // initialize HTU sensor
+  htu.begin();
+
   // set flag to pubish initial state
   needToPublish = true;
 }
 
 void loop() {
+  // get current temp and humidity readings
+  float temp = (htu.readTemperature() * 1.8) + 32;
+  float humidity = htu.readHumidity();
+
+  // update line 2 with the current values
+  updateLineTwo(temp, humidity);
+
+
+  // check if backlight should be turned on or off
   if(lastAction < millis() - LCD_TIMEOUT && backlightOn == true) {
     lcd.noBacklight();
     backlightOn = false;
   }
-
   if(lastAction > millis() - LCD_TIMEOUT && backlightOn == false) {
     lcd.backlight();
     backlightOn = true;
   }
 
+  // check if we need to publish any new messages (from switches)
   if(needToPublish) {
     needToPublish = false;
     publishMessage();
@@ -154,8 +180,8 @@ void loop() {
   // todo: do we want this in loop()?
   MQTT_connect();
 
+  // set receiving MQTT stuff
   mqtt.processPackets(100);
-
   if(!mqtt.ping()) {
     mqtt.disconnect();
   }
